@@ -13,6 +13,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"gotest.tools/assert"
+	"os"
+
 	//"os/exec"
 	"strings"
 	"testing"
@@ -158,7 +160,7 @@ func NewTestContainerSetup(ctx context.Context, request *testcontainers.Containe
 }
 
 // createMySQLRestoreConfig creates a brudi config for the sqlrestore command
-func createMySQLRestoreConfig(container TestContainerSetup, userestic bool, resticIP, resticport string) []byte {
+func createMySQLRestoreConfig(container TestContainerSetup, userestic bool, resticIP, resticPort string) []byte {
 	return []byte(fmt.Sprintf(`
       mysqlrestore:
         options:
@@ -171,7 +173,15 @@ func createMySQLRestoreConfig(container TestContainerSetup, userestic bool, rest
             database: mysql
           additionalArgs: []
           sourceFile: %s
-`, "127.0.0.1", container.Port, backupPath))
+      restic:
+        global:
+          flags:
+            repo: rest:http://%s:%s/
+        restore:
+          flags:
+            target: "/"
+          id: "latest"
+`, "127.0.0.1", container.Port, backupPath,resticIP, resticPort))
 }
 
 func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestBasicMySQLRestore() {
@@ -226,7 +236,7 @@ func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestBasicMySQLRestore() {
 	err = source.DoRestoreForKind(ctx, "mysqlrestore", false, false, false)
 	mySQLRestoreTestSuite.Require().NoError(err)
 
-	// err = os.Remove(backupPath)
+	err = os.Remove(backupPath)
 	mySQLRestoreTestSuite.Require().NoError(err)
 
 	// check if data was restored correctly
@@ -245,6 +255,90 @@ func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestBasicMySQLRestore() {
 
 	assert.DeepEqual(mySQLRestoreTestSuite.T(), testData, restoreResult)
 }
+
+func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestMySQLRestoreRestic() {
+	ctx := context.Background()
+
+	// create a mysql container to test backup function
+	mySQLBackupTarget, err := NewTestContainerSetup(ctx, &mySQLRequest, sqlPort)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	resticContainer, err := NewTestContainerSetup(ctx, &ResticReq, ResticPort)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+
+	// connect to mysql database using the driver
+	connectionString := fmt.Sprintf("root:mysqlroot@tcp(%s:%s)/%s?tls=skip-verify",
+		mySQLBackupTarget.Address, mySQLBackupTarget.Port, "mysql")
+	db, err := sql.Open("mysql", connectionString)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	// Create test table
+	_, err = db.Exec("CREATE TABLE test(id INT NOT NULL AUTO_INCREMENT, name VARCHAR(100) NOT NULL, PRIMARY KEY ( id ));")
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	// create test data and write it to database
+	testData, err := prepareTestData(db)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	err = db.Close()
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	testMySQLConfig := createMySQLConfig(mySQLBackupTarget, true, resticContainer.Address, resticContainer.Port)
+	err = viper.ReadConfig(bytes.NewBuffer(testMySQLConfig))
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	// perform backup action on first mysql container
+	err = source.DoBackupForKind(ctx, "mysqldump", false, true, false)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	err = mySQLBackupTarget.Container.Terminate(ctx)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	// setup second mysql container to test if correct data is restored
+	mySQLRestoreTarget, err := NewTestContainerSetup(ctx, &mySQLRequest, sqlPort)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	connectionString2 := fmt.Sprintf("root:mysqlroot@tcp(%s:%s)/%s?tls=skip-verify",
+		mySQLRestoreTarget.Address, mySQLRestoreTarget.Port, "mysql")
+	dbRestore, err := sql.Open("mysql", connectionString2)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	testMySQLRestoreConfig := createMySQLRestoreConfig(mySQLRestoreTarget, true, resticContainer.Address, resticContainer.Port)
+	err = viper.ReadConfig(bytes.NewBuffer(testMySQLRestoreConfig))
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	// restore server from mysqldump
+	err = source.DoRestoreForKind(ctx, "mysqlrestore", false, true, false)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	err = os.Remove(backupPath)
+	mySQLRestoreTestSuite.Require().NoError(err)
+
+	// check if data was restored correctly
+	result, err := dbRestore.Query("SELECT * FROM test")
+	mySQLRestoreTestSuite.Require().NoError(err)
+	mySQLRestoreTestSuite.Require().NoError(result.Err())
+	defer result.Close()
+
+	var restoreResult []TestStruct
+	for result.Next() {
+		var test TestStruct
+		err := result.Scan(&test.ID, &test.Name)
+		mySQLRestoreTestSuite.Require().NoError(err)
+		restoreResult = append(restoreResult, test)
+	}
+
+	assert.DeepEqual(mySQLRestoreTestSuite.T(), testData, restoreResult)
+
+	err = mySQLRestoreTarget.Container.Terminate(ctx)
+	mySQLRestoreTestSuite.Require().NoError(err)
+	err = dbRestore.Close()
+	mySQLRestoreTestSuite.Require().NoError(err)
+	err = resticContainer.Container.Terminate(ctx)
+	mySQLRestoreTestSuite.Require().NoError(err)
+}
+
 
 func TestMySQLRestoreTestSuite(t *testing.T) {
 	suite.Run(t, new(MySQLRestoreTestSuite))

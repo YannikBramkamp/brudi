@@ -14,7 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"gotest.tools/assert"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -121,7 +120,15 @@ func createMongoRestoreConfig(container TestContainerSetup, userestic bool, rest
            gzip: true
            archive: %s
          additionalArgs: []
-`, container.Address, container.Port, backupPath))
+     restic:
+        global:
+          flags:
+            repo: rest:http://%s:%s/
+        restore:
+          flags:
+            target: "/"
+          id: "latest"
+`, container.Address, container.Port, backupPath, resticIP, resticport))
 }
 
 // createMongoConfig creates a brudi config for the mongodump command
@@ -155,6 +162,10 @@ func createMongoConfig(container TestContainerSetup, useRestic bool, resticIP, r
         global:
           flags:
             repo: rest:http://%s:%s/
+        restore:
+          flags:
+            target: "/"
+          id: "latest"
         forget:
           flags:
             keepLast: 1
@@ -301,14 +312,8 @@ func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestMongoRestoreRestic() {
 	err = viper.ReadConfig(bytes.NewBuffer(testMongoRestoreConfig))
 	mongoRestoreTestSuite.Require().NoError(err)
 
-	cmd := exec.CommandContext(ctx, "restic", "restore", "-r", fmt.Sprintf("rest:http://%s:%s/",
-		resticContainer.Address, resticContainer.Port),
-		"--target", "data", "latest")
-	_, err = cmd.CombinedOutput()
-	mongoRestoreTestSuite.Require().NoError(err)
-
 	// restore data using restore function
-	err = source.DoRestoreForKind(ctx, "mongorestore", false, false, false)
+	err = source.DoRestoreForKind(ctx, "mongorestore", false, true, false)
 	mongoRestoreTestSuite.Require().NoError(err)
 
 	restoreClient, err := newMongoClient(&mongoRestoreTarget)
