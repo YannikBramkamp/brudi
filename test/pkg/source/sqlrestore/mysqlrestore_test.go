@@ -32,6 +32,7 @@ type TestStruct struct {
 	ID   int
 	Name string
 }
+
 type TestContainerSetup struct {
 	Container testcontainers.Container
 	Address   string
@@ -181,7 +182,7 @@ func createMySQLRestoreConfig(container TestContainerSetup, userestic bool, rest
           flags:
             target: "/"
           id: "latest"
-`, "127.0.0.1", container.Port, backupPath,resticIP, resticPort))
+`, "127.0.0.1", container.Port, backupPath, resticIP, resticPort))
 }
 
 func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestBasicMySQLRestore() {
@@ -254,6 +255,11 @@ func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestBasicMySQLRestore() {
 	}
 
 	assert.DeepEqual(mySQLRestoreTestSuite.T(), testData, restoreResult)
+
+	err = mySQLRestoreTarget.Container.Terminate(ctx)
+	mySQLRestoreTestSuite.Require().NoError(err)
+	err = dbRestore.Close()
+	mySQLRestoreTestSuite.Require().NoError(err)
 }
 
 func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestMySQLRestoreRestic() {
@@ -265,7 +271,6 @@ func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestMySQLRestoreRestic() {
 
 	resticContainer, err := NewTestContainerSetup(ctx, &ResticReq, ResticPort)
 	mySQLRestoreTestSuite.Require().NoError(err)
-
 
 	// connect to mysql database using the driver
 	connectionString := fmt.Sprintf("root:mysqlroot@tcp(%s:%s)/%s?tls=skip-verify",
@@ -338,7 +343,6 @@ func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestMySQLRestoreRestic() {
 	err = resticContainer.Container.Terminate(ctx)
 	mySQLRestoreTestSuite.Require().NoError(err)
 }
-
 
 func TestMySQLRestoreTestSuite(t *testing.T) {
 	suite.Run(t, new(MySQLRestoreTestSuite))

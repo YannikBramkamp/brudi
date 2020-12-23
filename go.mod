@@ -7,6 +7,7 @@ require (
 	github.com/fsnotify/fsnotify v1.4.8 // indirect
 	github.com/go-playground/validator/v10 v10.2.0
 	github.com/go-sql-driver/mysql v1.5.0
+	github.com/jackc/pgx v3.6.2+incompatible
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.4.2
