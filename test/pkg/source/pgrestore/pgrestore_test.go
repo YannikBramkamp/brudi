@@ -402,6 +402,6 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPSQLRestoreRestic() {
 	psqlRestoreHelper(pgRestoreTestSuite, true, resticContainer)
 }
 
-func TestMySQLRestoreTestSuite(t *testing.T) {
+func TestPGRestoreTestSuite(t *testing.T) {
 	suite.Run(t, new(PGRestoreTestSuite))
 }
