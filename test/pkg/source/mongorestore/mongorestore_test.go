@@ -211,37 +211,48 @@ func getResultsFromCursor(cur *mongo.Cursor) ([]interface{}, error) {
 	return results, nil
 }
 
-func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestBasicMongoRestore() {
-	ctx := context.Background()
-
+func mongoDoBackup(ctx context.Context, mongoRestoreTestSuite *MongoRestoreTestSuite, useRestic bool,
+	resticContainer TestContainerSetup) []interface{} {
 	// create a mongo container to test backup function
 	mongoBackupTarget, err := NewTestContainerSetup(ctx, &mongoRequest, mongoPort)
 	mongoRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = mongoBackupTarget.Container.Terminate(ctx)
+		mongoRestoreTestSuite.Require().NoError(err)
+	}()
 
 	backupClient, err := newMongoClient(&mongoBackupTarget)
 	mongoRestoreTestSuite.Require().NoError(err)
-
+	defer func() {
+		err = backupClient.Disconnect(ctx)
+		mongoRestoreTestSuite.Require().NoError(err)
+	}()
 	// write test data into database and retain it for later assertion
 	testData, err := prepareTestData(&backupClient)
 	mongoRestoreTestSuite.Require().NoError(err)
 
-	err = backupClient.Disconnect(context.TODO())
-	mongoRestoreTestSuite.Require().NoError(err)
-
-	testMongoConfig := createMongoConfig(mongoBackupTarget, false, "", "")
+	testMongoConfig := createMongoConfig(mongoBackupTarget, useRestic, resticContainer.Address, resticContainer.Port)
 	err = viper.ReadConfig(bytes.NewBuffer(testMongoConfig))
 	mongoRestoreTestSuite.Require().NoError(err)
 
 	// perform backup action on first mongo container
-	err = source.DoBackupForKind(ctx, "mongodump", false, false, false)
+	err = source.DoBackupForKind(ctx, "mongodump", false, useRestic, false)
 	mongoRestoreTestSuite.Require().NoError(err)
+	return testData
+}
 
-	err = mongoBackupTarget.Container.Terminate(ctx)
-	mongoRestoreTestSuite.Require().NoError(err)
+func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestBasicMongoRestore() {
+	ctx := context.Background()
+
+	testData := mongoDoBackup(ctx, mongoRestoreTestSuite, false, TestContainerSetup{Port: "", Address: ""})
 
 	// setup a new mongo container which will be used to ensure data was backed up correctly
 	mongoRestoreTarget, err := NewTestContainerSetup(ctx, &mongoRequest, mongoPort)
 	mongoRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = mongoRestoreTarget.Container.Terminate(ctx)
+		mongoRestoreTestSuite.Require().NoError(err)
+	}()
 
 	testMongoRestoreConfig := createMongoRestoreConfig(mongoRestoreTarget, "", "")
 	err = viper.ReadConfig(bytes.NewBuffer(testMongoRestoreConfig))
@@ -253,6 +264,10 @@ func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestBasicMongoRestore() {
 
 	restoreClient, err := newMongoClient(&mongoRestoreTarget)
 	mongoRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = restoreClient.Disconnect(ctx)
+		mongoRestoreTestSuite.Require().NoError(err)
+	}()
 
 	restoredCollection := restoreClient.Database("test").Collection("testColl")
 
@@ -268,47 +283,27 @@ func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestBasicMongoRestore() {
 
 	// check if the original data was restored
 	assert.DeepEqual(mongoRestoreTestSuite.T(), testData, results)
-
-	err = mongoRestoreTarget.Container.Terminate(ctx)
-	mongoRestoreTestSuite.Require().NoError(err)
-	err = restoreClient.Disconnect(context.TODO())
-	mongoRestoreTestSuite.Require().NoError(err)
 }
 
 func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestMongoRestoreRestic() {
 	ctx := context.Background()
 
-	// create a mongo container to test backup function
-	mongoBackupTarget, err := NewTestContainerSetup(ctx, &mongoRequest, mongoPort)
-	mongoRestoreTestSuite.Require().NoError(err)
-
 	resticContainer, err := NewTestContainerSetup(ctx, &ResticReq, ResticPort)
 	mongoRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = resticContainer.Container.Terminate(ctx)
+		mongoRestoreTestSuite.Require().NoError(err)
+	}()
 
-	backupClient, err := newMongoClient(&mongoBackupTarget)
-	mongoRestoreTestSuite.Require().NoError(err)
-
-	// write test data into database and retain it for later assertion
-	testData, err := prepareTestData(&backupClient)
-	mongoRestoreTestSuite.Require().NoError(err)
-
-	err = backupClient.Disconnect(context.TODO())
-	mongoRestoreTestSuite.Require().NoError(err)
-
-	testMongoConfig := createMongoConfig(mongoBackupTarget, true, resticContainer.Address, resticContainer.Port)
-	err = viper.ReadConfig(bytes.NewBuffer(testMongoConfig))
-	mongoRestoreTestSuite.Require().NoError(err)
-
-	// perform backup action on first mongo container
-	err = source.DoBackupForKind(ctx, "mongodump", false, true, false)
-	mongoRestoreTestSuite.Require().NoError(err)
-
-	err = mongoBackupTarget.Container.Terminate(ctx)
-	mongoRestoreTestSuite.Require().NoError(err)
+	testData := mongoDoBackup(ctx, mongoRestoreTestSuite, true, resticContainer)
 
 	// setup a new mongo container which will be used to ensure data was backed up correctly
 	mongoRestoreTarget, err := NewTestContainerSetup(ctx, &mongoRequest, mongoPort)
 	mongoRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = mongoRestoreTarget.Container.Terminate(ctx)
+		mongoRestoreTestSuite.Require().NoError(err)
+	}()
 
 	testMongoRestoreConfig := createMongoRestoreConfig(mongoRestoreTarget, resticContainer.Address, resticContainer.Port)
 	err = viper.ReadConfig(bytes.NewBuffer(testMongoRestoreConfig))
@@ -320,6 +315,10 @@ func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestMongoRestoreRestic() {
 
 	restoreClient, err := newMongoClient(&mongoRestoreTarget)
 	mongoRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = restoreClient.Disconnect(ctx)
+		mongoRestoreTestSuite.Require().NoError(err)
+	}()
 
 	restoredCollection := restoreClient.Database("test").Collection("testColl")
 
@@ -335,13 +334,6 @@ func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestMongoRestoreRestic() {
 
 	// check if the original data was restored
 	assert.DeepEqual(mongoRestoreTestSuite.T(), testData, results)
-
-	err = mongoRestoreTarget.Container.Terminate(ctx)
-	mongoRestoreTestSuite.Require().NoError(err)
-	err = restoreClient.Disconnect(context.TODO())
-	mongoRestoreTestSuite.Require().NoError(err)
-	err = resticContainer.Container.Terminate(ctx)
-	mongoRestoreTestSuite.Require().NoError(err)
 
 	// cleanup
 	err = os.RemoveAll("data")
