@@ -5,19 +5,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/mittwald/brudi/pkg/source"
+
 	"github.com/docker/go-connections/nat"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/mittwald/brudi/pkg/source"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"gotest.tools/assert"
-	"os"
-
-	//"os/exec"
-	"strings"
-	"testing"
 )
 
 const sqlPort = "3306/tcp"
@@ -161,7 +161,7 @@ func NewTestContainerSetup(ctx context.Context, request *testcontainers.Containe
 }
 
 // createMySQLRestoreConfig creates a brudi config for the sqlrestore command
-func createMySQLRestoreConfig(container TestContainerSetup, userestic bool, resticIP, resticPort string) []byte {
+func createMySQLRestoreConfig(container TestContainerSetup, resticIP, resticPort string) []byte {
 	return []byte(fmt.Sprintf(`
       mysqlrestore:
         options:
@@ -229,7 +229,7 @@ func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestBasicMySQLRestore() {
 	dbRestore, err := sql.Open("mysql", connectionString2)
 	mySQLRestoreTestSuite.Require().NoError(err)
 
-	testMySQLRestoreConfig := createMySQLRestoreConfig(mySQLRestoreTarget, false, "", "")
+	testMySQLRestoreConfig := createMySQLRestoreConfig(mySQLRestoreTarget, "", "")
 	err = viper.ReadConfig(bytes.NewBuffer(testMySQLRestoreConfig))
 	mySQLRestoreTestSuite.Require().NoError(err)
 
@@ -309,7 +309,7 @@ func (mySQLRestoreTestSuite *MySQLRestoreTestSuite) TestMySQLRestoreRestic() {
 	dbRestore, err := sql.Open("mysql", connectionString2)
 	mySQLRestoreTestSuite.Require().NoError(err)
 
-	testMySQLRestoreConfig := createMySQLRestoreConfig(mySQLRestoreTarget, true, resticContainer.Address, resticContainer.Port)
+	testMySQLRestoreConfig := createMySQLRestoreConfig(mySQLRestoreTarget, resticContainer.Address, resticContainer.Port)
 	err = viper.ReadConfig(bytes.NewBuffer(testMySQLRestoreConfig))
 	mySQLRestoreTestSuite.Require().NoError(err)
 

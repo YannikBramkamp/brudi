@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/docker/go-connections/nat"
+	"os"
+	"strings"
+	"testing"
+
 	"github.com/mittwald/brudi/pkg/source"
+
+	"github.com/docker/go-connections/nat"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
@@ -13,9 +18,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"gotest.tools/assert"
-	"os"
-	"strings"
-	"testing"
 )
 
 const mongoPort = "27017/tcp"
@@ -108,7 +110,7 @@ func NewTestContainerSetup(ctx context.Context, request *testcontainers.Containe
 }
 
 // createMongoRestoreConfig creates a brudi config for the mongorestore command
-func createMongoRestoreConfig(container TestContainerSetup, userestic bool, resticIP, resticport string) []byte {
+func createMongoRestoreConfig(container TestContainerSetup, resticIP, resticport string) []byte {
 	return []byte(fmt.Sprintf(`
      mongorestore:
        options:
@@ -241,7 +243,7 @@ func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestBasicMongoRestore() {
 	mongoRestoreTarget, err := NewTestContainerSetup(ctx, &mongoRequest, mongoPort)
 	mongoRestoreTestSuite.Require().NoError(err)
 
-	testMongoRestoreConfig := createMongoRestoreConfig(mongoRestoreTarget, false, "", "")
+	testMongoRestoreConfig := createMongoRestoreConfig(mongoRestoreTarget, "", "")
 	err = viper.ReadConfig(bytes.NewBuffer(testMongoRestoreConfig))
 	mongoRestoreTestSuite.Require().NoError(err)
 
@@ -308,7 +310,7 @@ func (mongoRestoreTestSuite *MongoRestoreTestSuite) TestMongoRestoreRestic() {
 	mongoRestoreTarget, err := NewTestContainerSetup(ctx, &mongoRequest, mongoPort)
 	mongoRestoreTestSuite.Require().NoError(err)
 
-	testMongoRestoreConfig := createMongoRestoreConfig(mongoRestoreTarget, true, resticContainer.Address, resticContainer.Port)
+	testMongoRestoreConfig := createMongoRestoreConfig(mongoRestoreTarget, resticContainer.Address, resticContainer.Port)
 	err = viper.ReadConfig(bytes.NewBuffer(testMongoRestoreConfig))
 	mongoRestoreTestSuite.Require().NoError(err)
 
