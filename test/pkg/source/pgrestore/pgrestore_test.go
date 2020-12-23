@@ -228,23 +228,33 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPGRestoreRestic() {
 	ctx := context.Background()
 	resticContainer, err := NewTestContainerSetup(ctx, &ResticReq, ResticPort)
 	pgRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = resticContainer.Container.Terminate(ctx)
+		pgRestoreTestSuite.Require().NoError(err)
+	}()
 
 	postgresRestoreHelper(pgRestoreTestSuite, true, resticContainer, "pgrestore", "tar")
 }
 
-func postgresRestoreHelper(pgRestoreTestSuite *PGRestoreTestSuite, useRestic bool, resticContainer TestContainerSetup,
-	kind, format string) {
-	ctx := context.Background()
-
+func postgresDoBackup(ctx context.Context, pgRestoreTestSuite *PGRestoreTestSuite, useRestic bool,
+	resticContainer TestContainerSetup, format string) []TestStruct {
 	// create a mysql container to test backup function
 	pgBackupTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
 	pgRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = pgBackupTarget.Container.Terminate(ctx)
+		pgRestoreTestSuite.Require().NoError(err)
+	}()
 
 	// connect to mysql database using the driver
 	connectionString := fmt.Sprintf("user=postgresuser password=postgresroot host=%s port=%s database=%s sslmode=disable",
 		pgBackupTarget.Address, pgBackupTarget.Port, "postgres")
 	db, err := sql.Open("pgx", connectionString)
 	pgRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = db.Close()
+		pgRestoreTestSuite.Require().NoError(err)
+	}()
 
 	// these are necessary, otherwise pgserver resets connections
 	time.Sleep(1 * time.Second)
@@ -259,9 +269,6 @@ func postgresRestoreHelper(pgRestoreTestSuite *PGRestoreTestSuite, useRestic boo
 	testData, err := prepareTestData(db)
 	pgRestoreTestSuite.Require().NoError(err)
 
-	err = db.Close()
-	pgRestoreTestSuite.Require().NoError(err)
-
 	testPGConfig := createPGConfig(pgBackupTarget, true, format, resticContainer.Address, resticContainer.Port)
 	err = viper.ReadConfig(bytes.NewBuffer(testPGConfig))
 	pgRestoreTestSuite.Require().NoError(err)
@@ -269,18 +276,33 @@ func postgresRestoreHelper(pgRestoreTestSuite *PGRestoreTestSuite, useRestic boo
 	// perform backup action on first pgsql container
 	err = source.DoBackupForKind(ctx, "pgdump", false, useRestic, false)
 	pgRestoreTestSuite.Require().NoError(err)
+	return testData
+}
 
-	err = pgBackupTarget.Container.Terminate(ctx)
-	pgRestoreTestSuite.Require().NoError(err)
+// postgresRestoreHelper performs the actual test
+// depending on format either psql or pg_restore will be used
+func postgresRestoreHelper(pgRestoreTestSuite *PGRestoreTestSuite, useRestic bool, resticContainer TestContainerSetup,
+	kind, format string) {
+	ctx := context.Background()
+
+	testData := postgresDoBackup(ctx, pgRestoreTestSuite, useRestic, resticContainer, format)
 
 	// setup second pgsql container to test if correct data is restored
 	pgRestoreTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
 	pgRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = pgRestoreTarget.Container.Terminate(ctx)
+		pgRestoreTestSuite.Require().NoError(err)
+	}()
 
 	connectionString2 := fmt.Sprintf("user=postgresuser password=postgresroot host=%s port=%s database=%s sslmode=disable",
 		pgRestoreTarget.Address, pgRestoreTarget.Port, "postgres")
 	dbRestore, err := sql.Open("pgx", connectionString2)
 	pgRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = dbRestore.Close()
+		pgRestoreTestSuite.Require().NoError(err)
+	}()
 
 	time.Sleep(1 * time.Second)
 	err = dbRestore.Ping()
@@ -312,11 +334,6 @@ func postgresRestoreHelper(pgRestoreTestSuite *PGRestoreTestSuite, useRestic boo
 	pgRestoreTestSuite.Require().NoError(err)
 
 	assert.DeepEqual(pgRestoreTestSuite.T(), testData, restoreResult)
-
-	err = pgRestoreTarget.Container.Terminate(ctx)
-	pgRestoreTestSuite.Require().NoError(err)
-	err = dbRestore.Close()
-	pgRestoreTestSuite.Require().NoError(err)
 }
 
 func (pgRestoreTestSuite *PGRestoreTestSuite) TestBasicPSQLRestore() {
@@ -327,6 +344,10 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPSQLRestoreRestic() {
 	ctx := context.Background()
 	resticContainer, err := NewTestContainerSetup(ctx, &ResticReq, ResticPort)
 	pgRestoreTestSuite.Require().NoError(err)
+	defer func() {
+		err = resticContainer.Container.Terminate(ctx)
+		pgRestoreTestSuite.Require().NoError(err)
+	}()
 
 	postgresRestoreHelper(pgRestoreTestSuite, true, resticContainer, "psql", "plain")
 }
