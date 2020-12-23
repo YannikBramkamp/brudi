@@ -218,93 +218,11 @@ func scanResult(result *sql.Rows) ([]TestStruct, error) {
 	return restoreResult, nil
 }
 
-func (pgRestoreTestSuite *PGRestoreTestSuite) TestBasicPGRestore() {
+func pgRestoreHelper(pgRestoreTestSuite *PGRestoreTestSuite, useRestic bool, resticContainer TestContainerSetup) {
 	ctx := context.Background()
 
 	// create a mysql container to test backup function
 	pgBackupTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
-	pgRestoreTestSuite.Require().NoError(err)
-	// connect to mysql database using the driver
-	connectionString := fmt.Sprintf("user=postgresuser password=postgresroot host=%s port=%s database=%s sslmode=disable",
-		pgBackupTarget.Address, pgBackupTarget.Port, "postgres")
-	db, err := sql.Open("pgx", connectionString)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// these are necessary, otherwise pgserver resets connections
-	time.Sleep(1 * time.Second)
-	err = db.Ping()
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// Create test table
-	_, err = db.Exec("CREATE TABLE test(id serial PRIMARY KEY, name VARCHAR(100) NOT NULL)")
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// create test data and write it to database
-	testData, err := prepareTestData(db)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	err = db.Close()
-	pgRestoreTestSuite.Require().NoError(err)
-
-	testPGConfig := createPGConfig(pgBackupTarget, false, "tar", "", "")
-	err = viper.ReadConfig(bytes.NewBuffer(testPGConfig))
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// perform backup action on first pgsql container
-	err = source.DoBackupForKind(ctx, "pgdump", false, false, false)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	err = pgBackupTarget.Container.Terminate(ctx)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// setup second pgsql container to test if correct data is restored
-	pgRestoreTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	connectionString2 := fmt.Sprintf("user=postgresuser password=postgresroot host=%s port=%s database=%s sslmode=disable",
-		pgRestoreTarget.Address, pgRestoreTarget.Port, "postgres")
-	dbRestore, err := sql.Open("pgx", connectionString2)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	time.Sleep(1 * time.Second)
-	err = dbRestore.Ping()
-	pgRestoreTestSuite.Require().NoError(err)
-
-	testPGRestoreConfig := createPGRestoreConfig(pgRestoreTarget, "", "")
-	err = viper.ReadConfig(bytes.NewBuffer(testPGRestoreConfig))
-	pgRestoreTestSuite.Require().NoError(err)
-
-	err = source.DoRestoreForKind(ctx, "pgrestore", false, false, false)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	err = os.Remove(backupPath)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// check if data was restored correctly
-	result, err := dbRestore.Query("SELECT * FROM test")
-	pgRestoreTestSuite.Require().NoError(err)
-	pgRestoreTestSuite.Require().NoError(result.Err())
-	defer result.Close()
-
-	restoreResult, err := scanResult(result)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	assert.DeepEqual(pgRestoreTestSuite.T(), testData, restoreResult)
-
-	err = pgRestoreTarget.Container.Terminate(ctx)
-	pgRestoreTestSuite.Require().NoError(err)
-	err = dbRestore.Close()
-	pgRestoreTestSuite.Require().NoError(err)
-}
-
-func (pgRestoreTestSuite *PGRestoreTestSuite) TestPGRestoreRestic() {
-	ctx := context.Background()
-
-	// create a mysql container to test backup function
-	pgBackupTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	resticContainer, err := NewTestContainerSetup(ctx, &ResticReq, ResticPort)
 	pgRestoreTestSuite.Require().NoError(err)
 
 	// connect to mysql database using the driver
@@ -334,7 +252,7 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPGRestoreRestic() {
 	pgRestoreTestSuite.Require().NoError(err)
 
 	// perform backup action on first pgsql container
-	err = source.DoBackupForKind(ctx, "pgdump", false, true, false)
+	err = source.DoBackupForKind(ctx, "pgdump", false, useRestic, false)
 	pgRestoreTestSuite.Require().NoError(err)
 
 	err = pgBackupTarget.Container.Terminate(ctx)
@@ -357,7 +275,7 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPGRestoreRestic() {
 	err = viper.ReadConfig(bytes.NewBuffer(testPGRestoreConfig))
 	pgRestoreTestSuite.Require().NoError(err)
 
-	err = source.DoRestoreForKind(ctx, "pgrestore", false, true, false)
+	err = source.DoRestoreForKind(ctx, "pgrestore", false, useRestic, false)
 	pgRestoreTestSuite.Require().NoError(err)
 
 	err = os.Remove(backupPath)
@@ -380,93 +298,23 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPGRestoreRestic() {
 	pgRestoreTestSuite.Require().NoError(err)
 }
 
-func (pgRestoreTestSuite *PGRestoreTestSuite) TestBasicPSQLRestore() {
-	ctx := context.Background()
-
-	// create a mysql container to test backup function
-	pgBackupTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
-	pgRestoreTestSuite.Require().NoError(err)
-	// connect to mysql database using the driver
-	connectionString := fmt.Sprintf("user=postgresuser password=postgresroot host=%s port=%s database=%s sslmode=disable",
-		pgBackupTarget.Address, pgBackupTarget.Port, "postgres")
-	db, err := sql.Open("pgx", connectionString)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// these are necessary, otherwise pgserver resets connections
-	time.Sleep(1 * time.Second)
-	err = db.Ping()
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// Create test table
-	_, err = db.Exec("CREATE TABLE test(id serial PRIMARY KEY, name VARCHAR(100) NOT NULL)")
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// create test data and write it to database
-	testData, err := prepareTestData(db)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	err = db.Close()
-	pgRestoreTestSuite.Require().NoError(err)
-
-	testPGConfig := createPGConfig(pgBackupTarget, false, "plain", "", "")
-	err = viper.ReadConfig(bytes.NewBuffer(testPGConfig))
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// perform backup action on first pgsql container
-	err = source.DoBackupForKind(ctx, "pgdump", false, false, false)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	err = pgBackupTarget.Container.Terminate(ctx)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// setup second pgsql container to test if correct data is restored
-	pgRestoreTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	connectionString2 := fmt.Sprintf("user=postgresuser password=postgresroot host=%s port=%s database=%s sslmode=disable",
-		pgRestoreTarget.Address, pgRestoreTarget.Port, "postgres")
-	dbRestore, err := sql.Open("pgx", connectionString2)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	time.Sleep(1 * time.Second)
-	err = dbRestore.Ping()
-	pgRestoreTestSuite.Require().NoError(err)
-
-	testPSQLRestoreConfig := createPSQLRestoreConfig(pgRestoreTarget, "", "")
-	err = viper.ReadConfig(bytes.NewBuffer(testPSQLRestoreConfig))
-	pgRestoreTestSuite.Require().NoError(err)
-
-	err = source.DoRestoreForKind(ctx, "psql", false, false, false)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	err = os.Remove(backupPath)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	// check if data was restored correctly
-	result, err := dbRestore.Query("SELECT * FROM test")
-	pgRestoreTestSuite.Require().NoError(err)
-	pgRestoreTestSuite.Require().NoError(result.Err())
-	defer result.Close()
-
-	restoreResult, err := scanResult(result)
-	pgRestoreTestSuite.Require().NoError(err)
-
-	assert.DeepEqual(pgRestoreTestSuite.T(), testData, restoreResult)
-
-	err = pgRestoreTarget.Container.Terminate(ctx)
-	pgRestoreTestSuite.Require().NoError(err)
-	err = dbRestore.Close()
-	pgRestoreTestSuite.Require().NoError(err)
+func (pgRestoreTestSuite *PGRestoreTestSuite) TestBasicPGRestore() {
+	pgRestoreHelper(pgRestoreTestSuite, false, TestContainerSetup{Port: "", Address: ""})
 }
 
-func (pgRestoreTestSuite *PGRestoreTestSuite) TestPSQLRestoreRestic() {
+func (pgRestoreTestSuite *PGRestoreTestSuite) TestPGRestoreRestic() {
 	ctx := context.Background()
-
-	// create a mysql container to test backup function
-	pgBackupTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
-	pgRestoreTestSuite.Require().NoError(err)
-
 	resticContainer, err := NewTestContainerSetup(ctx, &ResticReq, ResticPort)
+	pgRestoreTestSuite.Require().NoError(err)
+
+	pgRestoreHelper(pgRestoreTestSuite, true, resticContainer)
+}
+
+func psqlRestoreHelper(pgRestoreTestSuite *PGRestoreTestSuite, useRestic bool, resticContainer TestContainerSetup) {
+	ctx := context.Background()
+
+	// create a mysql container to test backup function
+	pgBackupTarget, err := NewTestContainerSetup(ctx, &pgRequest, pgPort)
 	pgRestoreTestSuite.Require().NoError(err)
 
 	// connect to mysql database using the driver
@@ -496,7 +344,7 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPSQLRestoreRestic() {
 	pgRestoreTestSuite.Require().NoError(err)
 
 	// perform backup action on first pgsql container
-	err = source.DoBackupForKind(ctx, "pgdump", false, true, false)
+	err = source.DoBackupForKind(ctx, "pgdump", false, useRestic, false)
 	pgRestoreTestSuite.Require().NoError(err)
 
 	err = pgBackupTarget.Container.Terminate(ctx)
@@ -519,7 +367,7 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPSQLRestoreRestic() {
 	err = viper.ReadConfig(bytes.NewBuffer(testPSQLRestoreConfig))
 	pgRestoreTestSuite.Require().NoError(err)
 
-	err = source.DoRestoreForKind(ctx, "psql", false, true, false)
+	err = source.DoRestoreForKind(ctx, "psql", false, useRestic, false)
 	pgRestoreTestSuite.Require().NoError(err)
 
 	err = os.Remove(backupPath)
@@ -540,6 +388,18 @@ func (pgRestoreTestSuite *PGRestoreTestSuite) TestPSQLRestoreRestic() {
 	pgRestoreTestSuite.Require().NoError(err)
 	err = dbRestore.Close()
 	pgRestoreTestSuite.Require().NoError(err)
+}
+
+func (pgRestoreTestSuite *PGRestoreTestSuite) TestBasicPSQLRestore() {
+	psqlRestoreHelper(pgRestoreTestSuite, false, TestContainerSetup{Port: "", Address: ""})
+}
+
+func (pgRestoreTestSuite *PGRestoreTestSuite) TestPSQLRestoreRestic() {
+	ctx := context.Background()
+	resticContainer, err := NewTestContainerSetup(ctx, &ResticReq, ResticPort)
+	pgRestoreTestSuite.Require().NoError(err)
+
+	psqlRestoreHelper(pgRestoreTestSuite, true, resticContainer)
 }
 
 func TestMySQLRestoreTestSuite(t *testing.T) {
