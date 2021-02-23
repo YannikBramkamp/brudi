@@ -302,7 +302,7 @@ func Forget(
 	var args []string
 	args = cli.StructToCLI(globalOpts)
 	args = append(args, cli.StructToCLI(forgetOpts)...)
-
+	args = append(args, "--json")
 	cmd := cli.CommandType{
 		Binary:  binary,
 		Command: "forget",
@@ -314,8 +314,9 @@ func Forget(
 		return nil, out, err
 	}
 	var deletedSnapshots []string
-	var forgetResponse ForgetResponse
-	err = json.Unmarshal(out, &forgetResponse)
+	var forgetTags []*ForgetTag
+	err = json.Unmarshal(out, &forgetTags)
+	forgetResponse := ForgetResponse{Tags: forgetTags}
 	if err != nil {
 		return nil, out, err
 	}
